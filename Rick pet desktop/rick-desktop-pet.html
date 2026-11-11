@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🛸 Rick Sanchez Desktop Pet</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 100vw; height: 100vh; overflow: hidden; background: #050810; }
+canvas { display: block; width: 100%; height: 100%; }
+#hud {
+  position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  color: rgba(0,255,136,0.32); font-family: 'Courier New', monospace;
+  font-size: 11px; pointer-events: none; text-align: center; letter-spacing: 1.2px;
+  text-shadow: 0 0 8px rgba(0,255,136,0.4);
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">CLICK → Rick cammina &nbsp;|&nbsp; CLICK SU RICK → Fallo parlare &nbsp;|&nbsp; DOPPIO CLICK → Teletrasporto forzato</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+window.addEventListener('resize', () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; });
+
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+// ── ROUNDED RECT HELPER ──────────────────────────────────────────────────────
+function rRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+// ── STARFIELD ─────────────────────────────────────────────────────────────────
+const stars = Array.from({length: 200}, () => ({
+  x: Math.random(), y: Math.random(),
+  r: rnd(0.3,1.8), ph: rnd(0,Math.PI*2), sp: rnd(0.006,0.022)
+}));
+function drawBg() {
+  const g = ctx.createRadialGradient(W*.28,H*.35,0, W*.5,H*.5, W*.8);
+  g.addColorStop(0,'#0d1f3c'); g.addColorStop(.5,'#080f1c'); g.addColorStop(1,'#030609');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const ng = ctx.createRadialGradient(W*.75,H*.25,0, W*.75,H*.25, W*.32);
+  ng.addColorStop(0,'rgba(0,255,100,.035)'); ng.addColorStop(1,'transparent');
+  ctx.fillStyle=ng; ctx.fillRect(0,0,W,H);
+  stars.forEach(s => {
+    s.ph+=s.sp;
+    ctx.fillStyle=`rgba(200,220,255,${.25+Math.sin(s.ph)*.3})`;
+    ctx.beginPath(); ctx.arc(s.x*W,s.y*H,s.r,0,Math.PI*2); ctx.fill();
+  });
+}
+
+// ── DRAW PORTAL ───────────────────────────────────────────────────────────────
+function drawPortal(x, y, sw, sh, t) {
+  if (sw<=0.01) return;
+  const pw=54*sw, ph=88*sh;
+  ctx.save(); ctx.translate(x,y);
+  // Outer halo
+  const nh = ctx.createRadialGradient(0,0,0,0,0,ph);
+  nh.addColorStop(0,'rgba(0,255,136,.14)'); nh.addColorStop(.55,'rgba(0,200,100,.05)'); nh.addColorStop(1,'transparent');
+  ctx.fillStyle=nh; ctx.beginPath(); ctx.ellipse(0,0,pw*1.8,ph*1.4,0,0,Math.PI*2); ctx.fill();
+  // Dark interior
+  const din = ctx.createRadialGradient(0,0,0,0,0,Math.min(pw,ph)*.85);
+  din.addColorStop(0,'rgba(0,14,7,.98)'); din.addColorStop(.65,'rgba(0,45,22,.9)'); din.addColorStop(1,'rgba(0,90,45,.4)');
+  ctx.fillStyle=din; ctx.beginPath(); ctx.ellipse(0,0,pw*.84,ph*.84,0,0,Math.PI*2); ctx.fill();
+  // Swirl arms
+  const rot = t*.036;
+  for(let arm=0;arm<7;arm++){
+    const a0=(arm/7)*Math.PI*2+rot;
+    ctx.strokeStyle=`rgba(0,255,136,${.1+arm*.028})`; ctx.lineWidth=1.1;
+    ctx.beginPath();
+    for(let i=0;i<=24;i++){
+      const tt=i/24, angle=a0+tt*Math.PI*.85, rad=tt*Math.min(pw,ph)*.77;
+      const ex=Math.cos(angle)*rad*(pw/Math.min(pw,ph)), ey=Math.sin(angle)*rad*(ph/Math.min(pw,ph));
+      i===0?ctx.moveTo(ex,ey):ctx.lineTo(ex,ey);
+    }
+    ctx.stroke();
+  }
+  // Rings
+  for(let ring=0;ring<4;ring++){
+    const rw=pw*(.48+ring*.17), rh=ph*(.48+ring*.17);
+    ctx.strokeStyle=`rgba(0,255,136,${.65-ring*.08})`; ctx.lineWidth=ring===3?2.8:1.5;
+    if(ring===3){ctx.shadowColor='#00ff88'; ctx.shadowBlur=14;}
+    ctx.beginPath(); ctx.ellipse(0,0,rw,rh,rot*(ring%2===0?1:-.7),0,Math.PI*2); ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+
+// ── DRAW RICK ─────────────────────────────────────────────────────────────────
+function drawRick(x, y, right, frm, state, alpha) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0,Math.min(1,alpha));
+  ctx.translate(x,y);
+  if(!right) ctx.scale(-1,1);
+
+  const bob = Math.sin(frm*.072)*(state==='walk'?2.5:1.2);
+  const leg = state==='walk' ? Math.sin(frm*.24)*22 : 0;
+  const aim = state==='aiming'||state==='beam';
+
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,.22)';
+  ctx.beginPath(); ctx.ellipse(0,53,26,7,0,0,Math.PI*2); ctx.fill();
+
+  // Shoes
+  ctx.fillStyle='#181818';
+  ctx.save(); ctx.translate(-14,48+bob); ctx.rotate(leg*.015);
+  ctx.beginPath(); ctx.ellipse(0,4,12,5.5,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(14,48+bob); ctx.rotate(-leg*.015);
+  ctx.beginPath(); ctx.ellipse(0,4,12,5.5,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // Legs
+  ctx.fillStyle='#3d72a4';
+  ctx.save(); ctx.translate(-14,27+bob); ctx.rotate(leg*Math.PI/180);
+  ctx.fillRect(-6,0,12,23); ctx.restore();
+  ctx.save(); ctx.translate(14,27+bob); ctx.rotate(-leg*Math.PI/180);
+  ctx.fillRect(-6,0,12,23); ctx.restore();
+
+  // Lab coat body
+  ctx.fillStyle='#ced4e0';
+  ctx.beginPath();
+  ctx.moveTo(-23,2+bob); ctx.lineTo(-21,31+bob); ctx.lineTo(21,31+bob); ctx.lineTo(23,2+bob);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#adb6c5'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(-6,2+bob); ctx.lineTo(-9,31+bob); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(6,2+bob); ctx.lineTo(9,31+bob); ctx.stroke();
+
+  // Shirt collar
+  ctx.fillStyle='#4a80c0';
+  ctx.beginPath();
+  ctx.moveTo(-9,2+bob); ctx.lineTo(9,2+bob); ctx.lineTo(11,19+bob); ctx.lineTo(-11,19+bob);
+  ctx.closePath(); ctx.fill();
+
+  // Left arm
+  ctx.fillStyle='#ced4e0';
+  ctx.save(); ctx.translate(-23,7+bob); ctx.rotate(18*Math.PI/180);
+  ctx.fillRect(-5,0,10,26);
+  ctx.fillStyle='#f0c030'; ctx.beginPath(); ctx.ellipse(0,30,7,6,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Right arm + portal gun
+  const gAngle = aim ? -58 : 18;
+  ctx.fillStyle='#ced4e0';
+  ctx.save(); ctx.translate(23,7+bob); ctx.rotate(gAngle*Math.PI/180);
+  ctx.fillRect(-5,0,10,26);
+  ctx.fillStyle='#f0c030'; ctx.beginPath(); ctx.ellipse(0,30,7,6,0,0,Math.PI*2); ctx.fill();
+  // Gun body
+  ctx.fillStyle='#484850'; rRect(ctx,-4,24,24,11,3); ctx.fill();
+  ctx.fillStyle='#363640'; rRect(ctx,17,21,20,8,3); ctx.fill();
+  ctx.fillStyle='#555558'; ctx.fillRect(-2,26,6,7);
+  ctx.fillStyle='#666'; ctx.beginPath(); ctx.arc(8,30,2,0,Math.PI*2); ctx.fill();
+  // Glowing tip
+  const gp=.65+Math.sin(frm*.13)*.35;
+  ctx.shadowColor='#00ff88'; ctx.shadowBlur=16*gp;
+  ctx.fillStyle=`rgba(0,255,136,${gp})`;
+  ctx.beginPath(); ctx.arc(34,25,5.5,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='#00cc66'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(34,25,7.5,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+
+  // Head
+  ctx.fillStyle='#f0c030';
+  ctx.beginPath(); ctx.ellipse(0,-20+bob,19,22,0,0,Math.PI*2); ctx.fill();
+
+  // Hair
+  ctx.fillStyle='#f0f0f0';
+  ctx.beginPath();
+  ctx.moveTo(-18,-25+bob);
+  ctx.bezierCurveTo(-26,-38+bob,-21,-50+bob,-11,-45+bob);
+  ctx.bezierCurveTo(-7,-54+bob,2,-52+bob,5,-49+bob);
+  ctx.bezierCurveTo(10,-56+bob,17,-51+bob,19,-45+bob);
+  ctx.bezierCurveTo(27,-40+bob,23,-30+bob,18,-26+bob);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-17,-31+bob); ctx.lineTo(-31,-57+bob); ctx.lineTo(-7,-41+bob); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-3,-45+bob); ctx.lineTo(0,-62+bob); ctx.lineTo(7,-45+bob); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(15,-37+bob); ctx.lineTo(29,-56+bob); ctx.lineTo(19,-29+bob); ctx.closePath(); ctx.fill();
+
+  // Eye whites
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-9,-21+bob,7.5,8.5,-.12,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9,-21+bob,7.5,8.5,.12,0,Math.PI*2); ctx.fill();
+  // Irises
+  ctx.fillStyle='#1e6aab';
+  ctx.beginPath(); ctx.ellipse(-9,-20+bob,4.5,5.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9,-20+bob,4.5,5.5,0,0,Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle='#09090f';
+  ctx.beginPath(); ctx.arc(-9,-20+bob,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(9,-20+bob,2.5,0,Math.PI*2); ctx.fill();
+  // Shine
+  ctx.fillStyle='rgba(255,255,255,.88)';
+  ctx.beginPath(); ctx.arc(-7.5,-22+bob,1.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(10.5,-22+bob,1.3,0,Math.PI*2); ctx.fill();
+  // Eye bags
+  ctx.strokeStyle='rgba(145,105,0,.42)'; ctx.lineWidth=1.8;
+  ctx.beginPath(); ctx.arc(-9,-13+bob,9,.25,Math.PI-.25); ctx.stroke();
+  ctx.beginPath(); ctx.arc(9,-13+bob,9,.25,Math.PI-.25); ctx.stroke();
+
+  // Eyebrows
+  ctx.strokeStyle='#888'; ctx.lineWidth=2; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-15,-30+bob); ctx.lineTo(-5,-32+bob); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(5,-32+bob); ctx.lineTo(15,-30+bob); ctx.stroke();
+
+  // Mouth
+  ctx.strokeStyle='#38301e'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(-7,-8+bob); ctx.quadraticCurveTo(0,-5+bob,7,-8+bob); ctx.stroke();
+
+  // Drool
+  ctx.strokeStyle='#00bb44'; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-2,-3+bob); ctx.bezierCurveTo(-4,2+bob,-3,6+bob,-2,9+bob); ctx.stroke();
+  const dp=.8+Math.sin(frm*.09)*.2;
+  ctx.fillStyle='#00bb44'; ctx.beginPath(); ctx.arc(-2,10+bob,3.5*dp,0,Math.PI*2); ctx.fill();
+
+  ctx.globalAlpha=1; ctx.restore();
+}
+
+// ── SPEECH BUBBLE ─────────────────────────────────────────────────────────────
+function drawBubble(x, y, text, alpha) {
+  if(alpha<=0||!text) return;
+  ctx.save(); ctx.globalAlpha=alpha;
+  ctx.font='bold 13px "Courier New",monospace'; ctx.textAlign='left';
+  const lines=text.split('\n'), lh=19, pad=12;
+  const tw=Math.max(...lines.map(l=>ctx.measureText(l).width));
+  const bw=tw+pad*2, bh=lines.length*lh+pad*2;
+  let bx=x-bw/2, by=y-bh-22;
+  bx=Math.max(8,Math.min(W-bw-8,bx)); by=Math.max(8,by);
+  ctx.fillStyle='rgba(0,0,0,.3)'; rRect(ctx,bx+3,by+3,bw,bh,9); ctx.fill();
+  ctx.fillStyle='rgba(4,16,10,.94)'; ctx.strokeStyle='#00ff88'; ctx.lineWidth=2;
+  rRect(ctx,bx,by,bw,bh,9); ctx.fill(); ctx.stroke();
+  // Tail
+  ctx.fillStyle='rgba(4,16,10,.94)';
+  ctx.beginPath(); ctx.moveTo(x-7,by+bh); ctx.lineTo(x,by+bh+14); ctx.lineTo(x+7,by+bh); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#00ff88'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x-7,by+bh); ctx.lineTo(x,by+bh+14); ctx.lineTo(x+7,by+bh); ctx.stroke();
+  ctx.fillStyle='#00ff88'; ctx.textBaseline='top';
+  lines.forEach((l,i)=>ctx.fillText(l,bx+pad,by+pad+i*lh));
+  ctx.globalAlpha=1; ctx.restore();
+}
+
+// ── PORTAL BEAM ───────────────────────────────────────────────────────────────
+function drawBeam(x1,y1,x2,y2,alpha,t) {
+  if(alpha<=0) return;
+  ctx.save(); ctx.globalAlpha=alpha;
+  ctx.strokeStyle='rgba(0,255,136,.22)'; ctx.lineWidth=9; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.strokeStyle='#00ff88'; ctx.lineWidth=2.5;
+  ctx.shadowColor='#00ff88'; ctx.shadowBlur=14;
+  ctx.setLineDash([13,7]); ctx.lineDashOffset=-(t*.28);
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.setLineDash([]); ctx.shadowBlur=0; ctx.globalAlpha=1; ctx.restore();
+}
+
+// ── PARTICLES ─────────────────────────────────────────────────────────────────
+const particles = [];
+function spawnParticles(x,y) {
+  for(let i=0;i<18;i++){
+    const angle=rnd(0,Math.PI*2), spd=rnd(1,5);
+    particles.push({x,y,vx:Math.cos(angle)*spd,vy:Math.sin(angle)*spd-.5,life:1,maxLife:rnd(.5,1.2),r:rnd(2,5)});
+  }
+}
+function updateParticles(dt) {
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx; p.y+=p.vy; p.vy+=.06; p.life-=dt/1000;
+    if(p.life<=0){particles.splice(i,1);continue;}
+    const a=(p.life/p.maxLife)*0.9;
+    ctx.fillStyle=`rgba(0,255,136,${a})`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r*(p.life/p.maxLife),0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── QUOTES ────────────────────────────────────────────────────────────────────
+const QUOTES=[
+  "Wubba lubba\ndub dub!",
+  "Get schwifty!",
+  "Sono il Rick più\nintelligente!",
+  "Morty! MORTY!",
+  "*BURP*\n...scien-za!",
+  "Andiamo Morty!",
+  "La vita è breve.",
+  "Existence is pain!",
+  "*BURP* che\nschifo!",
+  "Questo posto fa\nschifo!",
+  "Nobody exists\non purpose.",
+  "Big reveal!\nBOOM!",
+  "I'm Pickle Rick!",
+  "Peace among\nworlds!",
+  "Vai a fanculo,\nuniverso!",
+  "Sono ubriaco.\nChe novità.",
+  "I turned myself\ninto a portal gun!",
+  "Oh yeah!\nCan do!",
+];
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+const rick={
+  x:0,y:0, tx:0,ty:0, facing:true,
+  state:'idle', frm:0, alpha:1, stT:0,
+  p1:{x:0,y:0,sw:0,sh:0}, // entry portal
+  p2:{x:0,y:0,sw:0,sh:0}, // exit portal
+  beamA:0, bEx:0, bEy:0,
+  bubble:null, bubbleA:0, bubbleT:0,
+};
+let lastDec=0, decInt=2800, gT=0;
+
+function initRick(){ rick.x=W/2; rick.y=H/2; rick.tx=W/2; rick.ty=H/2; }
+
+function randPos(){ return{x:rnd(90,W-90),y:rnd(90,H-90)}; }
+
+function showQuote(){
+  rick.bubble=QUOTES[Math.floor(Math.random()*QUOTES.length)];
+  rick.bubbleA=1; rick.bubbleT=3000;
+}
+
+function doTeleport(dx,dy){
+  rick.state='aiming'; rick.stT=0;
+  rick.p2={x:dx,y:dy,sw:0,sh:0};
+  rick.p1={x:rick.x,y:rick.y,sw:0,sh:0};
+  rick.bEx=dx; rick.bEy=dy; rick.beamA=0;
+}
+
+function gunWorldPos(){
+  const offX=rick.facing?52:-52;
+  return{x:rick.x+offX,y:rick.y-12};
+}
+
+function update(dt,t){
+  rick.frm++;
+  rick.stT+=dt;
+  if(rick.bubbleT>0){rick.bubbleT-=dt; rick.bubbleA=rick.bubbleT<380?rick.bubbleT/380:1;}
+  else rick.bubbleA=0;
+
+  switch(rick.state){
+    case'idle':
+      if(t-lastDec>decInt){
+        lastDec=t; decInt=rnd(2000,5200);
+        const r=Math.random();
+        if(r<.37){const p=randPos(); rick.tx=p.x; rick.ty=p.y; rick.state='walk';}
+        else if(r<.72){const p=randPos(); doTeleport(p.x,p.y);}
+        else showQuote();
+      }
+      break;
+
+    case'walk':{
+      const dx=rick.tx-rick.x, dy=rick.ty-rick.y, d=Math.sqrt(dx*dx+dy*dy);
+      if(d<4){rick.x=rick.tx; rick.y=rick.ty; rick.state='idle'; lastDec=t; decInt=rnd(1500,3500);}
+      else{rick.x+=dx/d*2.9; rick.y+=dy/d*2.9; rick.facing=dx>0;}
+      break;
+    }
+
+    case'aiming':
+      rick.facing=rick.p2.x>=rick.x;
+      if(rick.stT>750){rick.state='beam'; rick.stT=0; rick.beamA=1;}
+      break;
+
+    case'beam':{
+      const op=Math.min(1,rick.stT/480);
+      rick.p2.sw=op; rick.p2.sh=op;
+      if(rick.stT>700){
+        const ep=Math.min(1,(rick.stT-700)/380);
+        rick.p1.sw=ep; rick.p1.sh=ep*1.3;
+        rick.beamA=Math.max(0,1-(rick.stT-700)/260);
+      }
+      if(rick.stT>1150){rick.state='entering'; rick.stT=0; rick.beamA=0;}
+      break;
+    }
+
+    case'entering':{
+      const prog=Math.min(1,rick.stT/680);
+      rick.alpha=1-prog;
+      if(rick.stT>500){const cp=(rick.stT-500)/400; rick.p1.sw=Math.max(0,1-cp*.28);}
+      if(rick.stT>920){
+        spawnParticles(rick.x,rick.y);
+        rick.x=rick.p2.x; rick.y=rick.p2.y;
+        rick.p1.sw=0; rick.state='exiting'; rick.stT=0;
+      }
+      break;
+    }
+
+    case'exiting':{
+      rick.alpha=Math.min(1,rick.stT/580);
+      if(rick.stT>800){const cp=(rick.stT-800)/480; rick.p2.sw=Math.max(0,1-cp); rick.p2.sh=rick.p2.sw;}
+      if(rick.stT>1380){
+        rick.p2.sw=rick.p2.sh=rick.p1.sw=rick.p1.sh=0;
+        rick.alpha=1; rick.state='idle'; lastDec=t; decInt=rnd(1200,2800);
+        if(Math.random()>.45) showQuote();
+        spawnParticles(rick.x,rick.y);
+      }
+      break;
+    }
+  }
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+let lastT=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(ts-lastT,50); lastT=ts; gT=ts;
+  ctx.clearRect(0,0,W,H);
+  drawBg();
+  update(dt,ts);
+  updateParticles(dt);
+  // Portals
+  drawPortal(rick.p1.x,rick.p1.y,rick.p1.sw,rick.p1.sh,ts);
+  drawPortal(rick.p2.x,rick.p2.y,rick.p2.sw,rick.p2.sh,ts);
+  // Beam
+  if(rick.beamA>0){const gp=gunWorldPos(); drawBeam(gp.x,gp.y,rick.bEx,rick.bEy,rick.beamA,ts);}
+  // Rick
+  drawRick(rick.x,rick.y,rick.facing,rick.frm,rick.state,rick.alpha);
+  // Bubble
+  drawBubble(rick.x,rick.y-58,rick.bubble,rick.bubbleA);
+}
+
+// ── INTERACTIONS ──────────────────────────────────────────────────────────────
+canvas.addEventListener('click',e=>{
+  const dx=e.clientX-rick.x, dy=e.clientY-rick.y;
+  if(Math.sqrt(dx*dx+dy*dy)<65) showQuote();
+  else if(rick.state==='idle'||rick.state==='walk'){
+    rick.tx=e.clientX; rick.ty=e.clientY; rick.state='walk';
+    lastDec=gT; decInt=rnd(2000,5000);
+  }
+});
+canvas.addEventListener('dblclick',e=>{
+  if(rick.state==='idle'||rick.state==='walk') doTeleport(e.clientX,e.clientY);
+});
+
+// Boot
+initRick();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
